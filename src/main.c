@@ -5,8 +5,13 @@
 #include "driver/rmt_tx.h"
 #include "driver/rmt_encoder.h"
 #include "esp_err.h"
+#include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "littlefs_storage.h"
+#include "time_service.h"
+#include "uart_counter.h"
+#include "wifi_client.h"
 
 #define UART_NUM UART_NUM_0
 #define TXD_PIN GPIO_NUM_1
@@ -156,7 +161,6 @@ static void uart_task(void *arg)
 {
     uint8_t data[BUF_SIZE];
     int len = 0;
-    uint32_t count = 0;
 
     (void)arg;
 
@@ -175,7 +179,8 @@ static void uart_task(void *arg)
         }
 
         char msg[64];
-        snprintf(msg, sizeof(msg), "Message #%lu\r\n", ++count);
+        const uint32_t count = uart_counter_increment();
+        snprintf(msg, sizeof(msg), "Message #%lu\r\n", (unsigned long)count);
         uart_send_string(msg);
 
         vTaskDelay(pdMS_TO_TICKS(2000));
@@ -184,6 +189,17 @@ static void uart_task(void *arg)
 
 void app_main(void)
 {
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(err);
+
+    ESP_ERROR_CHECK(littlefs_storage_init());
+    ESP_ERROR_CHECK(time_service_init());
+
+    ESP_ERROR_CHECK(wifi_client_init());
     uart_init();
     configure_ws2812_chain();
 
