@@ -1,7 +1,5 @@
-curl.exe http://ESP32-IP/files/
-curl.exe -X PUT --data-binary "@sensor.csv" http://192.168.1.42/files/sensor.csv
-Read: GET http://<ESP32-IP>/files/<filename>
-Write or replace: PUT http://<ESP32-IP>/files/<filename>
+directory: curl.exe http://ESP32-IP/files/
+file upload: curl.exe --upload-file test.txt "http://192.168.43.72/files/test.txt" --> Hat funktioniert
+Read: http://192.168.43.72/files/test.txt
+Read mit Curl: curl.exe "http://192.168.43.72/files/test.txt"
 
-directory:
-curl.exe http://ESP32-IP/files
