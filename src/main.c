@@ -1,4 +1,5 @@
-﻿#include <stdio.h>
+﻿/* (c) by Heiko Frey, 2026*/
+#include <stdio.h>
 #include <string.h>
 #include "driver/uart.h"
 #include "driver/gpio.h"
