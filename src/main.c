@@ -6,10 +6,12 @@
 #include "driver/rmt_tx.h"
 #include "driver/rmt_encoder.h"
 #include "esp_err.h"
+#include "esp_log.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "littlefs_storage.h"
+#include "mpu6050.h"
 #include "time_service.h"
 #include "uart_counter.h"
 #include "wifi_client.h"
@@ -23,6 +25,7 @@
 #define WS2812B_COUNT 30
 #define RMT_RESOLUTION_HZ 10000000
 
+static const char *TAG = "main";
 static uint8_t ws2812_data[WS2812B_COUNT * 3];
 static const uint8_t led_colors[6][3] = {
     {255, 0, 0},      // red
@@ -38,6 +41,8 @@ static rmt_transmit_config_t tx_config = {
     .loop_count = 0,
     .flags.eot_level = 0,
 };
+
+static mpu6050_orientation_t orientation;
 
 void uart_init(void) {
     uart_config_t uart_config = {
@@ -188,6 +193,28 @@ static void uart_task(void *arg)
     }
 }
 
+static void mpu6050_task(void *arg)
+{
+    (void)arg;
+
+    while (1) {
+        //mpu6050_orientation_t orientation;
+        const esp_err_t err = mpu6050_read_orientation(&orientation);
+        if (err == ESP_OK) {
+            char message[96];
+            const int length = snprintf(message, sizeof(message),
+                                        "MPU6050 roll: %.2f, pitch: %.2f, yaw: %.2f degrees\r\n",
+                                        orientation.roll, orientation.pitch, orientation.yaw);
+            if (length > 0 && (size_t)length < sizeof(message)) {
+                uart_send_string(message);
+            } else {
+                ESP_LOGE(TAG, "Failed to format MPU6050 UART output");
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
 void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -203,6 +230,15 @@ void app_main(void)
     ESP_ERROR_CHECK(wifi_client_init());
     uart_init();
     configure_ws2812_chain();
+
+    err = mpu6050_init();
+    if (err == ESP_OK) {
+        if (xTaskCreate(&mpu6050_task, "mpu6050_task", 3072, NULL, 4, NULL) != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create MPU6050 task");
+        }
+    } else {
+        ESP_LOGE(TAG, "MPU6050 unavailable; continuing without orientation readings");
+    }
 
     xTaskCreate(&led_task, "led_task", 2048, NULL, 5, NULL);
     xTaskCreate(&uart_task, "uart_task", 4096, NULL, 4, NULL);

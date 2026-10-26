@@ -8,6 +8,7 @@
 #include <time.h>
 
 #include "esp_http_server.h"
+#include "mpu6050.h"
 #include "time_service.h"
 #include "uart_counter.h"
 
@@ -59,12 +60,24 @@ static esp_err_t index_handler(httpd_req_t *request)
         "<h1>Activity Cube</h1><p style='display:flex;gap:1.5em'>"
         "<span>UART counter: <strong id='count'>...</strong></span>"
         "<span>Current time: <strong id='time'>...</strong></span></p>"
-        "<script>async function update(){try{const [c,t]=await Promise.all(["
-        "fetch('/counter'),fetch('/time')]);"
+        "<h2>MPU6050 orientation</h2>"
+        "<p>Roll: <strong id='roll'>...</strong> degrees</p>"
+        "<p>Pitch: <strong id='pitch'>...</strong> degrees</p>"
+        "<p>Yaw: <strong id='yaw'>...</strong> degrees</p>"
+        "<script>async function update(){try{const [c,t,o]=await Promise.all(["
+        "fetch('/counter'),fetch('/time'),fetch('/orientation')]);"
+        "if(!c.ok||!t.ok||!o.ok)throw Error('Request failed');"
         "document.getElementById('count').textContent=await c.text();"
-        "document.getElementById('time').textContent=await t.text();}"
+        "document.getElementById('time').textContent=await t.text();"
+        "const angles=await o.json();"
+        "document.getElementById('roll').textContent=angles.available?angles.roll.toFixed(2):'Unavailable';"
+        "document.getElementById('pitch').textContent=angles.available?angles.pitch.toFixed(2):'Unavailable';"
+        "document.getElementById('yaw').textContent=angles.available?angles.yaw.toFixed(2):'Unavailable';}"
         "catch(e){document.getElementById('count').textContent='Offline';"
-        "document.getElementById('time').textContent='Offline';}}"
+        "document.getElementById('time').textContent='Offline';"
+        "document.getElementById('roll').textContent='Offline';"
+        "document.getElementById('pitch').textContent='Offline';"
+        "document.getElementById('yaw').textContent='Offline';}}"
         "update();setInterval(update,1000);</script></body></html>";
 
     httpd_resp_set_type(request, "text/html; charset=utf-8");
@@ -100,6 +113,32 @@ static esp_err_t time_handler(httpd_req_t *request)
 
     httpd_resp_set_type(request, "text/plain; charset=utf-8");
     return httpd_resp_send(request, response, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t orientation_handler(httpd_req_t *request)
+{
+    mpu6050_orientation_t orientation;
+    const esp_err_t err = mpu6050_get_orientation(&orientation);
+    if (err == ESP_ERR_INVALID_STATE) {
+        httpd_resp_set_type(request, "application/json; charset=utf-8");
+        return httpd_resp_send(request, "{\"available\":false}", HTTPD_RESP_USE_STRLEN);
+    }
+    if (err != ESP_OK) {
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Failed to read MPU6050 orientation");
+    }
+
+    char response[128];
+    const int length = snprintf(response, sizeof(response),
+                                "{\"available\":true,\"roll\":%.2f,\"pitch\":%.2f,\"yaw\":%.2f}",
+                                orientation.roll, orientation.pitch, orientation.yaw);
+    if (length < 0 || (size_t)length >= sizeof(response)) {
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Failed to format MPU6050 orientation");
+    }
+
+    httpd_resp_set_type(request, "application/json; charset=utf-8");
+    return httpd_resp_send(request, response, length);
 }
 
 static esp_err_t file_list_handler(httpd_req_t *request)
@@ -281,6 +320,18 @@ esp_err_t web_server_start(void)
         .handler = time_handler,
     };
     err = httpd_register_uri_handler(server, &time_uri);
+    if (err != ESP_OK) {
+        httpd_stop(server);
+        server = NULL;
+        return err;
+    }
+
+    const httpd_uri_t orientation_uri = {
+        .uri = "/orientation",
+        .method = HTTP_GET,
+        .handler = orientation_handler,
+    };
+    err = httpd_register_uri_handler(server, &orientation_uri);
     if (err != ESP_OK) {
         httpd_stop(server);
         server = NULL;
