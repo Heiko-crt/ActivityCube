@@ -25,6 +25,55 @@
 #define WS2812B_COUNT 30
 #define RMT_RESOLUTION_HZ 10000000
 
+#define PITCH_MIN_1 -15.0f
+#define PITCH_NOM_1 0
+#define PITCH_MAX_1 15.0f
+#define ROLL_MIN_1 75.0f
+#define ROLL_NOM_1 90.0f
+#define ROLL_MAX_1 105.0f
+
+#define PITCH_MIN_2 -75.0f
+#define PITCH_NOM_2 -90.0f
+#define PITCH_MAX_2 -105.0f
+#define ROLL_MIN_2 -180.0f
+#define ROLL_NOM_2 0
+#define ROLL_MAX_2 180.0f
+
+#define PITCH_MIN_3 -15.0f
+#define PITCH_NOM_3 0
+#define PITCH_MAX_3 15.0f
+#define ROLL_MIN_3 -15.0f
+#define ROLL_NOM_3 0
+#define ROLL_MAX_3 15.0f
+
+#define PITCH_MIN_4 75.0f
+#define PITCH_NOM_4 90.0f
+#define PITCH_MAX_4 105.0f
+#define ROLL_MIN_4 -180.0f
+#define ROLL_NOM_4 0
+#define ROLL_MAX_4 180.0f
+
+#define PITCH_MIN_5a -15.0f
+#define PITCH_NOM_5a 0
+#define PITCH_MAX_5a 15.0f
+#define ROLL_MIN_5a 165.0f
+#define ROLL_NOM_5a 180.0f
+#define ROLL_MAX_5a 180.0f
+
+#define PITCH_MIN_5b -15.0f
+#define PITCH_NOM_5b 0
+#define PITCH_MAX_5b 15.0f
+#define ROLL_MIN_5b -165.0f
+#define ROLL_NOM_5b -180.0f
+#define ROLL_MAX_5b -180.0f
+
+#define PITCH_MIN_6 -15.0f
+#define PITCH_NOM_6 0
+#define PITCH_MAX_6 15.0f
+#define ROLL_MIN_6 -75.0f
+#define ROLL_NOM_6 -90.0f
+#define ROLL_MAX_6 -105.0f
+
 static const char *TAG = "main";
 static uint8_t ws2812_data[WS2812B_COUNT * 3];
 static const uint8_t led_colors[6][3] = {
@@ -35,6 +84,14 @@ static const uint8_t led_colors[6][3] = {
     {0, 0, 255},      // blue
     {255, 255, 255},  // white
 };
+static const uint8_t led_colors_low[6][3] = {
+    {63, 0, 0},      // red
+    {0, 63, 0},      // green
+    {63, 63, 0},    // yellow
+    {63, 0, 63},    // purple
+    {0, 0, 63},      // blue
+    {63, 63, 63},  // white
+};
 static rmt_channel_handle_t tx_channel = NULL;
 static rmt_encoder_handle_t bytes_encoder = NULL;
 static rmt_transmit_config_t tx_config = {
@@ -43,6 +100,13 @@ static rmt_transmit_config_t tx_config = {
 };
 
 static mpu6050_orientation_t orientation;
+static char cubeposition = 0;
+
+bool is_between(float value, float a, float b)
+{
+    return (value >= (a < b ? a : b)) &&
+           (value <= (a > b ? a : b));
+}
 
 void uart_init(void) {
     uart_config_t uart_config = {
@@ -95,9 +159,25 @@ static void ws2812_step_colors(uint8_t offset) {
         const uint8_t *color = led_colors[(i + offset) % 6];
         ws2812_set_pixel(i, color[0], color[1], color[2]);
     }
-
     ws2812_refresh();
 }
+
+static void ws2812_standard_colors(void) {
+    for (size_t i = 0; i < 6; ++i) {
+        const uint8_t *color = led_colors[(i) % 6];
+        ws2812_set_pixel(i, color[0], color[1], color[2]);
+    }
+    ws2812_refresh();
+}
+
+static void ws2812_low_colors(void) {
+    for (size_t i = 0; i < 6; ++i) {
+        const uint8_t *color = led_colors_low[(i) % 6];
+        ws2812_set_pixel(i, color[0], color[1], color[2]);
+    }
+    ws2812_refresh();
+}
+
 
 void configure_ws2812_chain(void) {
     memset(ws2812_data, 0, sizeof(ws2812_data));
@@ -153,12 +233,24 @@ static void led_task(void *arg)
 {
     uint8_t led_step = 0;
     const TickType_t led_step_delay = pdMS_TO_TICKS(100);
+    static char cubeposition_old = 0;
+    static TickType_t last_update_time = 0;
 
     (void)arg;
 
     while (1) {
-        ws2812_step_colors(led_step);
-        led_step = (led_step + 1) % 6;
+        if(cubeposition == 0) {
+            ws2812_step_colors(led_step);
+            led_step = (led_step + 1) % 6;
+        }
+        if ((cubeposition != cubeposition_old) && (cubeposition != 0)) {
+            last_update_time = xTaskGetTickCount();
+        } else if (xTaskGetTickCount() - last_update_time >= pdMS_TO_TICKS(5000)) {
+            ws2812_low_colors();
+        } else {
+            ws2812_standard_colors();
+        }
+        cubeposition_old = cubeposition;
         vTaskDelay(led_step_delay);
     }
 }
@@ -215,6 +307,42 @@ static void mpu6050_task(void *arg)
     }
 }
 
+static void cube_position(void *arg)
+{
+    (void)arg;
+
+    while (1) {
+        char message[128];
+        
+        if (is_between((float)orientation.pitch, (float)PITCH_MIN_1, (float)PITCH_MAX_1) && is_between((float)orientation.roll, (float)ROLL_MIN_1, (float)ROLL_MAX_1)) {
+            cubeposition = 1;
+        } else if (is_between((float)orientation.pitch, (float)PITCH_MIN_2, (float)PITCH_MAX_2) && is_between((float)orientation.roll, (float)ROLL_MIN_2, (float)ROLL_MAX_2)) {
+            cubeposition = 2;
+        } else if (is_between((float)orientation.pitch, (float)PITCH_MIN_3, (float)PITCH_MAX_3) && is_between((float)orientation.roll, (float)ROLL_MIN_3, (float)ROLL_MAX_3)) {
+            cubeposition = 3;
+        } else if (is_between((float)orientation.pitch, (float)PITCH_MIN_4, (float)PITCH_MAX_4) && is_between((float)orientation.roll, (float)ROLL_MIN_4, (float)ROLL_MAX_4)) {
+            cubeposition = 4;
+        } else if (is_between((float)orientation.pitch, (float)PITCH_MIN_5a, (float)PITCH_MAX_5a) && is_between((float)orientation.roll, (float)ROLL_MIN_5a, (float)ROLL_MAX_5a)) {
+            cubeposition = 5;
+        } else if (is_between((float)orientation.pitch, (float)PITCH_MIN_5b, (float)PITCH_MAX_5b) && is_between((float)orientation.roll, (float)ROLL_MIN_5b, (float)ROLL_MAX_5b)) {
+            cubeposition = 5;
+        } else if (is_between((float)orientation.pitch, (float)PITCH_MIN_6, (float)PITCH_MAX_6) && is_between((float)orientation.roll, (float)ROLL_MIN_6, (float)ROLL_MAX_6)) {
+            cubeposition = 6;
+        } else {
+            cubeposition = 0; // Unknown position
+        }
+        
+        const int length = snprintf(message, sizeof(message),
+                                    "Cube position - %d \r\n",cubeposition);
+        if (length > 0 && (size_t)length < sizeof(message)) {
+            uart_send_string(message);
+        } else {
+            ESP_LOGE(TAG, "Failed to format cube position UART output");
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+
 void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -242,6 +370,7 @@ void app_main(void)
 
     xTaskCreate(&led_task, "led_task", 2048, NULL, 5, NULL);
     xTaskCreate(&uart_task, "uart_task", 4096, NULL, 4, NULL);
+    xTaskCreate(&cube_position, "cube_position", 2048, NULL, 3, NULL);
 
     vTaskDelete(NULL);
 }
