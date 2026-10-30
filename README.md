@@ -28,6 +28,11 @@ The home page displays the angles and refreshes them once per second. It also
 shows the detected cube position; the page background changes color for each
 of the six recognized positions and returns to a neutral color when the
 position is unknown or the sensor is unavailable.
+Each detected change in cube position is appended to
+`/littlefs/orientation_history.csv`, including transitions to an unclear
+orientation. The history table is displayed on the home page and can be
+refreshed with its button. Timestamps use local time after NTP synchronization;
+before synchronization, entries show device uptime.
 The UART log also records each MPU6050 I2C transaction: 7-bit device address,
 register/data bytes sent, received bytes, and the ESP-IDF result. Successful
 transaction results mean the driver observed ACKs; failures report the driver

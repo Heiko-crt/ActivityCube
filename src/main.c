@@ -12,6 +12,7 @@
 #include "freertos/task.h"
 #include "littlefs_storage.h"
 #include "mpu6050.h"
+#include "orientation_history.h"
 #include "time_service.h"
 #include "uart_counter.h"
 #include "wifi_client.h"
@@ -100,12 +101,45 @@ static rmt_transmit_config_t tx_config = {
 };
 
 static mpu6050_orientation_t orientation;
-static char cubeposition = 0;
+static volatile char cubeposition = 0;
 
 bool is_between(float value, float a, float b)
 {
     return (value >= (a < b ? a : b)) &&
            (value <= (a > b ? a : b));
+}
+
+static void update_cube_position(void)
+{
+    if (is_between(orientation.pitch, PITCH_MIN_1, PITCH_MAX_1) &&
+        is_between(orientation.roll, ROLL_MIN_1, ROLL_MAX_1)) {
+        cubeposition = 1;
+    } else if (is_between(orientation.pitch, PITCH_MIN_2, PITCH_MAX_2) &&
+               is_between(orientation.roll, ROLL_MIN_2, ROLL_MAX_2)) {
+        cubeposition = 2;
+    } else if (is_between(orientation.pitch, PITCH_MIN_3, PITCH_MAX_3) &&
+               is_between(orientation.roll, ROLL_MIN_3, ROLL_MAX_3)) {
+        cubeposition = 3;
+    } else if (is_between(orientation.pitch, PITCH_MIN_4, PITCH_MAX_4) &&
+               is_between(orientation.roll, ROLL_MIN_4, ROLL_MAX_4)) {
+        cubeposition = 4;
+    } else if (is_between(orientation.pitch, PITCH_MIN_5a, PITCH_MAX_5a) &&
+               is_between(orientation.roll, ROLL_MIN_5a, ROLL_MAX_5a)) {
+        cubeposition = 5;
+    } else if (is_between(orientation.pitch, PITCH_MIN_5b, PITCH_MAX_5b) &&
+               is_between(orientation.roll, ROLL_MIN_5b, ROLL_MAX_5b)) {
+        cubeposition = 5;
+    } else if (is_between(orientation.pitch, PITCH_MIN_6, PITCH_MAX_6) &&
+               is_between(orientation.roll, ROLL_MIN_6, ROLL_MAX_6)) {
+        cubeposition = 6;
+    } else {
+        cubeposition = 0;
+    }
+
+    const esp_err_t err = orientation_history_record((uint8_t)cubeposition);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to record cube orientation: %s", esp_err_to_name(err));
+    }
 }
 
 void uart_init(void) {
@@ -293,6 +327,7 @@ static void mpu6050_task(void *arg)
         //mpu6050_orientation_t orientation;
         const esp_err_t err = mpu6050_read_orientation(&orientation);
         if (err == ESP_OK) {
+            update_cube_position();
             char message[96];
             const int length = snprintf(message, sizeof(message),
                                         "MPU6050 roll: %.2f, pitch: %.2f, yaw: %.2f degrees\r\n",
@@ -313,25 +348,6 @@ static void cube_position(void *arg)
 
     while (1) {
         char message[128];
-        
-        if (is_between((float)orientation.pitch, (float)PITCH_MIN_1, (float)PITCH_MAX_1) && is_between((float)orientation.roll, (float)ROLL_MIN_1, (float)ROLL_MAX_1)) {
-            cubeposition = 1;
-        } else if (is_between((float)orientation.pitch, (float)PITCH_MIN_2, (float)PITCH_MAX_2) && is_between((float)orientation.roll, (float)ROLL_MIN_2, (float)ROLL_MAX_2)) {
-            cubeposition = 2;
-        } else if (is_between((float)orientation.pitch, (float)PITCH_MIN_3, (float)PITCH_MAX_3) && is_between((float)orientation.roll, (float)ROLL_MIN_3, (float)ROLL_MAX_3)) {
-            cubeposition = 3;
-        } else if (is_between((float)orientation.pitch, (float)PITCH_MIN_4, (float)PITCH_MAX_4) && is_between((float)orientation.roll, (float)ROLL_MIN_4, (float)ROLL_MAX_4)) {
-            cubeposition = 4;
-        } else if (is_between((float)orientation.pitch, (float)PITCH_MIN_5a, (float)PITCH_MAX_5a) && is_between((float)orientation.roll, (float)ROLL_MIN_5a, (float)ROLL_MAX_5a)) {
-            cubeposition = 5;
-        } else if (is_between((float)orientation.pitch, (float)PITCH_MIN_5b, (float)PITCH_MAX_5b) && is_between((float)orientation.roll, (float)ROLL_MIN_5b, (float)ROLL_MAX_5b)) {
-            cubeposition = 5;
-        } else if (is_between((float)orientation.pitch, (float)PITCH_MIN_6, (float)PITCH_MAX_6) && is_between((float)orientation.roll, (float)ROLL_MIN_6, (float)ROLL_MAX_6)) {
-            cubeposition = 6;
-        } else {
-            cubeposition = 0; // Unknown position
-        }
-        
         const int length = snprintf(message, sizeof(message),
                                     "Cube position - %d \r\n",cubeposition);
         if (length > 0 && (size_t)length < sizeof(message)) {
@@ -353,6 +369,7 @@ void app_main(void)
     ESP_ERROR_CHECK(err);
 
     ESP_ERROR_CHECK(littlefs_storage_init());
+    ESP_ERROR_CHECK(orientation_history_init());
     ESP_ERROR_CHECK(time_service_init());
 
     ESP_ERROR_CHECK(wifi_client_init());

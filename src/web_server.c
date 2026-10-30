@@ -8,7 +8,9 @@
 #include <time.h>
 
 #include "esp_http_server.h"
+#include "esp_log.h"
 #include "mpu6050.h"
+#include "orientation_history.h"
 #include "time_service.h"
 #include "uart_counter.h"
 
@@ -68,6 +70,7 @@ static esp_err_t index_handler(httpd_req_t *request)
         "body[data-position='6']{background:#f8fafc}"
         ".status{display:inline-block;padding:.35rem .7rem;border-radius:999px;"
         "background:#e2e8f0;font-weight:600}"
+        "iframe{width:100%;height:24rem;border:1px solid #cbd5e1;background:white}"
         "</style></head><body data-position='unknown'>"
         "<h1>Activity Cube</h1><p style='display:flex;gap:1.5em'>"
         "<span>UART counter: <strong id='count'>...</strong></span>"
@@ -77,7 +80,23 @@ static esp_err_t index_handler(httpd_req_t *request)
         "<p>Roll: <strong id='roll'>...</strong> degrees</p>"
         "<p>Pitch: <strong id='pitch'>...</strong> degrees</p>"
         "<p>Yaw: <strong id='yaw'>...</strong> degrees</p>"
-        "<script>function getPosition(a){const r=a.roll,p=a.pitch;"
+        "<h2>Orientation history</h2>"
+        "<p>Position changes are recorded; unclear orientation is shown as such. "
+        "Times are device-local after NTP synchronization, otherwise uptime.</p>"
+        "<button type='button' onclick=\"document.getElementById('history').src="
+        "'/history?refresh='+Date.now()\">Refresh history</button>"
+        "<button type='button' onclick='clearHistory()'>Clear history</button>"
+        "<span id='history-status' role='status' aria-live='polite'></span>"
+        "<iframe id='history' title='Orientation history' src='/history'></iframe>"
+        "<script>async function clearHistory(){const status=document.getElementById('history-status');"
+        "if(!confirm('Clear the orientation history?'))return;"
+        "status.textContent='Clearing...';"
+        "try{const response=await fetch('/history',{method:'DELETE'});"
+        "if(!response.ok)throw Error(await response.text());"
+        "document.getElementById('history').src='/history?refresh='+Date.now();"
+        "status.textContent='History cleared.';}"
+        "catch(e){status.textContent='Could not clear history: '+e.message;}}"
+        "function getPosition(a){const r=a.roll,p=a.pitch;"
         "if(p>=-15&&p<=15&&r>=75&&r<=105)return 1;"
         "if(p>=-105&&p<=-75)return 2;"
         "if(p>=-15&&p<=15&&r>=-15&&r<=15)return 3;"
@@ -168,6 +187,137 @@ static esp_err_t orientation_handler(httpd_req_t *request)
 
     httpd_resp_set_type(request, "application/json; charset=utf-8");
     return httpd_resp_send(request, response, length);
+}
+
+static const char *orientation_name(int position)
+{
+    static const char *const names[] = {
+        "Unclear", "Position 1", "Position 2", "Position 3",
+        "Position 4", "Position 5", "Position 6",
+    };
+    return position >= 0 && position <= 6 ? names[position] : NULL;
+}
+
+static esp_err_t history_send_chunk(httpd_req_t *request, const char *text)
+{
+    return httpd_resp_send_chunk(request, text, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t history_handler(httpd_req_t *request)
+{
+    FILE *file = fopen(ORIENTATION_HISTORY_FILE, "r");
+    if (file == NULL) {
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Could not open orientation history");
+    }
+
+    esp_err_t err = httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    if (err != ESP_OK) {
+        fclose(file);
+        return err;
+    }
+
+    httpd_resp_set_type(request, "text/html; charset=utf-8");
+    err = history_send_chunk(
+        request, "<!doctype html><html><head><meta charset='utf-8'>"
+                 "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                 "<style>body{font-family:system-ui,sans-serif;margin:.5rem}"
+                 "table{border-collapse:collapse;width:100%}"
+                 "th,td{text-align:left;padding:.5rem;border-bottom:1px solid #ddd}"
+                 "thead{position:sticky;top:0;background:#f1f5f9}</style>"
+                 "</head><body><table><thead><tr><th>Timestamp</th>"
+                 "<th>Orientation</th></tr></thead><tbody>");
+    char line[96];
+    while (err == ESP_OK && fgets(line, sizeof(line), file) != NULL) {
+        char timestamp[64];
+        int position;
+        int consumed = 0;
+        if (sscanf(line, "%63[^,],%d%n", timestamp, &position, &consumed) != 2 ||
+            orientation_name(position) == NULL) {
+            continue;
+        }
+
+        const char *tail = line + consumed;
+        if (*tail == '\r') {
+            ++tail;
+        }
+        if (*tail == '\n') {
+            ++tail;
+        }
+        if (*tail != '\0') {
+            continue;
+        }
+
+        char escaped_timestamp[256];
+        size_t output_length = 0;
+        for (const char *source = timestamp; *source != '\0'; ++source) {
+            const char *replacement = NULL;
+            switch (*source) {
+            case '&': replacement = "&amp;"; break;
+            case '<': replacement = "&lt;"; break;
+            case '>': replacement = "&gt;"; break;
+            case '"': replacement = "&quot;"; break;
+            case '\'': replacement = "&#39;"; break;
+            default:
+                if (output_length + 1 >= sizeof(escaped_timestamp)) {
+                    err = ESP_FAIL;
+                } else {
+                    escaped_timestamp[output_length++] = *source;
+                }
+                continue;
+            }
+            const size_t replacement_length = strlen(replacement);
+            if (output_length + replacement_length >= sizeof(escaped_timestamp)) {
+                err = ESP_FAIL;
+                break;
+            }
+            memcpy(&escaped_timestamp[output_length], replacement, replacement_length);
+            output_length += replacement_length;
+        }
+        if (err != ESP_OK) {
+            break;
+        }
+        escaped_timestamp[output_length] = '\0';
+
+        char row[384];
+        const int length = snprintf(row, sizeof(row),
+                                    "<tr><td>%s</td><td>%s</td></tr>",
+                                    escaped_timestamp, orientation_name(position));
+        if (length < 0 || (size_t)length >= sizeof(row)) {
+            err = ESP_FAIL;
+            break;
+        }
+        err = httpd_resp_send_chunk(request, row, length);
+    }
+
+    if (ferror(file) && err == ESP_OK) {
+        err = ESP_FAIL;
+    }
+    if (fclose(file) != 0 && err == ESP_OK) {
+        err = ESP_FAIL;
+    }
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    return history_send_chunk(request, "</tbody></table></body></html>") == ESP_OK
+               ? httpd_resp_send_chunk(request, NULL, 0)
+               : ESP_FAIL;
+}
+
+static esp_err_t history_clear_handler(httpd_req_t *request)
+{
+    const esp_err_t err = orientation_history_clear();
+    if (err != ESP_OK) {
+        ESP_LOGE("web_server", "Failed to clear orientation history: %s",
+                 esp_err_to_name(err));
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Failed to clear orientation history");
+    }
+
+    httpd_resp_set_type(request, "text/plain; charset=utf-8");
+    return httpd_resp_send(request, "History cleared",
+                           HTTPD_RESP_USE_STRLEN);
 }
 
 static esp_err_t file_list_handler(httpd_req_t *request)
@@ -313,6 +463,7 @@ esp_err_t web_server_start(void)
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.max_uri_handlers = 10;
     config.uri_match_fn = httpd_uri_match_wildcard;
     esp_err_t err = httpd_start(&server, &config);
     if (err != ESP_OK) {
@@ -325,6 +476,30 @@ esp_err_t web_server_start(void)
         .handler = index_handler,
     };
     err = httpd_register_uri_handler(server, &index_uri);
+    if (err != ESP_OK) {
+        httpd_stop(server);
+        server = NULL;
+        return err;
+    }
+
+    const httpd_uri_t history_clear_uri = {
+        .uri = "/history",
+        .method = HTTP_DELETE,
+        .handler = history_clear_handler,
+    };
+    err = httpd_register_uri_handler(server, &history_clear_uri);
+    if (err != ESP_OK) {
+        httpd_stop(server);
+        server = NULL;
+        return err;
+    }
+
+    const httpd_uri_t history_uri = {
+        .uri = "/history",
+        .method = HTTP_GET,
+        .handler = history_handler,
+    };
+    err = httpd_register_uri_handler(server, &history_uri);
     if (err != ESP_OK) {
         httpd_stop(server);
         server = NULL;
