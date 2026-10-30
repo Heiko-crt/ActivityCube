@@ -24,7 +24,10 @@ Roll and pitch use accelerometer/gyroscope complementary filtering. Yaw is
 integrated from the gyroscope only, so it is relative and will drift over time
 because the MPU6050 has no magnetometer. When detected, the application outputs
 all three angles to UART every 100 ms and serves them as JSON at `/orientation`.
-The home page displays the angles and refreshes them once per second.
+The home page displays the angles and refreshes them once per second. It also
+shows the detected cube position; the page background changes color for each
+of the six recognized positions and returns to a neutral color when the
+position is unknown or the sensor is unavailable.
 The UART log also records each MPU6050 I2C transaction: 7-bit device address,
 register/data bytes sent, received bytes, and the ESP-IDF result. Successful
 transaction results mean the driver observed ACKs; failures report the driver
