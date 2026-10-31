@@ -54,7 +54,7 @@ esp_err_t orientation_history_init(void)
     return ESP_OK;
 }
 
-esp_err_t orientation_history_record(uint8_t position)
+static esp_err_t orientation_history_record_internal(uint8_t position, bool force)
 {
     if (position > 6) {
         return ESP_ERR_INVALID_ARG;
@@ -65,7 +65,7 @@ esp_err_t orientation_history_record(uint8_t position)
     if (xSemaphoreTake(history_mutex, portMAX_DELAY) != pdTRUE) {
         return ESP_FAIL;
     }
-    if (has_previous_position && position == previous_position) {
+    if (!force && has_previous_position && position == previous_position) {
         xSemaphoreGive(history_mutex);
         return ESP_OK;
     }
@@ -117,6 +117,16 @@ esp_err_t orientation_history_record(uint8_t position)
     ESP_LOGI(TAG, "Recorded orientation %u at %s", position, timestamp);
     xSemaphoreGive(history_mutex);
     return ESP_OK;
+}
+
+esp_err_t orientation_history_record(uint8_t position)
+{
+    return orientation_history_record_internal(position, false);
+}
+
+esp_err_t orientation_history_record_event(uint8_t position)
+{
+    return orientation_history_record_internal(position, true);
 }
 
 esp_err_t orientation_history_clear(void)

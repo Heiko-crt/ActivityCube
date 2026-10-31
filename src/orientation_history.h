@@ -9,6 +9,7 @@
 
 esp_err_t orientation_history_init(void);
 esp_err_t orientation_history_record(uint8_t position);
+esp_err_t orientation_history_record_event(uint8_t position);
 esp_err_t orientation_history_clear(void);
 
 #endif

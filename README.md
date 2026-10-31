@@ -33,6 +33,16 @@ Each detected change in cube position is appended to
 orientation. The history table is displayed on the home page and can be
 refreshed with its button. Timestamps use local time after NTP synchronization;
 before synchronization, entries show device uptime.
+
+## Power button
+
+Connect a normally open pushbutton between GPIO 33 and GND on the ESP32 DevKit.
+Holding it for 3 seconds sets the cube orientation to undefined and records
+that event, lights all WS2812 LEDs red for one second, turns them off, and
+enters deep sleep. The hold duration can be changed at build time by defining
+`SLEEP_BUTTON_HOLD_MS`. Pressing the same button wakes the device; it then
+boots normally.
+
 The UART log also records each MPU6050 I2C transaction: 7-bit device address,
 register/data bytes sent, received bytes, and the ESP-IDF result. Successful
 transaction results mean the driver observed ACKs; failures report the driver
