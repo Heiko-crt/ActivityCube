@@ -31,8 +31,9 @@ position is unknown or the sensor is unavailable.
 Each detected change in cube position is appended to
 `/littlefs/orientation_history.csv`, including transitions to an unclear
 orientation. The history table is displayed on the home page and can be
-refreshed with its button. Timestamps use local time after NTP synchronization;
-before synchronization, entries show device uptime.
+refreshed with its button. The CSV and web table show time since startup and
+NTP-based local time in separate columns; the NTP time is `undefined` until
+synchronization.
 
 ## Power button
 

@@ -82,7 +82,8 @@ static esp_err_t index_handler(httpd_req_t *request)
         "<p>Yaw: <strong id='yaw'>...</strong> degrees</p>"
         "<h2>Orientation history</h2>"
         "<p>Position changes are recorded; unclear orientation is shown as such. "
-        "Times are device-local after NTP synchronization, otherwise uptime.</p>"
+        "Time since startup and NTP-based time are shown separately; NTP time is "
+        "undefined until synchronization.</p>"
         "<button type='button' onclick=\"document.getElementById('history').src="
         "'/history?refresh='+Date.now()\">Refresh history</button>"
         "<button type='button' onclick='clearHistory()'>Clear history</button>"
@@ -203,6 +204,36 @@ static esp_err_t history_send_chunk(httpd_req_t *request, const char *text)
     return httpd_resp_send_chunk(request, text, HTTPD_RESP_USE_STRLEN);
 }
 
+static esp_err_t history_escape_html(const char *source, char *escaped,
+                                    size_t escaped_size)
+{
+    size_t output_length = 0;
+    for (; *source != '\0'; ++source) {
+        const char *replacement = NULL;
+        switch (*source) {
+        case '&': replacement = "&amp;"; break;
+        case '<': replacement = "&lt;"; break;
+        case '>': replacement = "&gt;"; break;
+        case '"': replacement = "&quot;"; break;
+        case '\'': replacement = "&#39;"; break;
+        default:
+            if (output_length + 1 >= escaped_size) {
+                return ESP_FAIL;
+            }
+            escaped[output_length++] = *source;
+            continue;
+        }
+        const size_t replacement_length = strlen(replacement);
+        if (output_length + replacement_length >= escaped_size) {
+            return ESP_FAIL;
+        }
+        memcpy(&escaped[output_length], replacement, replacement_length);
+        output_length += replacement_length;
+    }
+    escaped[output_length] = '\0';
+    return ESP_OK;
+}
+
 static esp_err_t history_handler(httpd_req_t *request)
 {
     FILE *file = fopen(ORIENTATION_HISTORY_FILE, "r");
@@ -225,15 +256,30 @@ static esp_err_t history_handler(httpd_req_t *request)
                  "table{border-collapse:collapse;width:100%}"
                  "th,td{text-align:left;padding:.5rem;border-bottom:1px solid #ddd}"
                  "thead{position:sticky;top:0;background:#f1f5f9}</style>"
-                 "</head><body><table><thead><tr><th>Timestamp</th>"
+                 "</head><body><table><thead><tr><th>Time since startup</th>"
+                 "<th>NTP-based time</th>"
                  "<th>Orientation</th></tr></thead><tbody>");
-    char line[96];
+    char line[128];
     while (err == ESP_OK && fgets(line, sizeof(line), file) != NULL) {
-        char timestamp[64];
+        char uptime[64] = "undefined";
+        char ntp_time[64] = "undefined";
         int position;
         int consumed = 0;
-        if (sscanf(line, "%63[^,],%d%n", timestamp, &position, &consumed) != 2 ||
-            orientation_name(position) == NULL) {
+        if (sscanf(line, "%63[^,],%63[^,],%d%n", uptime, ntp_time,
+                   &position, &consumed) != 3) {
+            char legacy_timestamp[64];
+            consumed = 0;
+            if (sscanf(line, "%63[^,],%d%n", legacy_timestamp, &position,
+                       &consumed) != 2) {
+                continue;
+            }
+            if (strncmp(legacy_timestamp, "uptime ", 7) == 0) {
+                snprintf(uptime, sizeof(uptime), "%s", legacy_timestamp + 7);
+            } else {
+                snprintf(ntp_time, sizeof(ntp_time), "%s", legacy_timestamp);
+            }
+        }
+        if (orientation_name(position) == NULL) {
             continue;
         }
 
@@ -248,41 +294,21 @@ static esp_err_t history_handler(httpd_req_t *request)
             continue;
         }
 
-        char escaped_timestamp[256];
-        size_t output_length = 0;
-        for (const char *source = timestamp; *source != '\0'; ++source) {
-            const char *replacement = NULL;
-            switch (*source) {
-            case '&': replacement = "&amp;"; break;
-            case '<': replacement = "&lt;"; break;
-            case '>': replacement = "&gt;"; break;
-            case '"': replacement = "&quot;"; break;
-            case '\'': replacement = "&#39;"; break;
-            default:
-                if (output_length + 1 >= sizeof(escaped_timestamp)) {
-                    err = ESP_FAIL;
-                } else {
-                    escaped_timestamp[output_length++] = *source;
-                }
-                continue;
-            }
-            const size_t replacement_length = strlen(replacement);
-            if (output_length + replacement_length >= sizeof(escaped_timestamp)) {
-                err = ESP_FAIL;
-                break;
-            }
-            memcpy(&escaped_timestamp[output_length], replacement, replacement_length);
-            output_length += replacement_length;
-        }
-        if (err != ESP_OK) {
+        char escaped_uptime[256];
+        char escaped_ntp_time[256];
+        if (history_escape_html(uptime, escaped_uptime,
+                                sizeof(escaped_uptime)) != ESP_OK ||
+            history_escape_html(ntp_time, escaped_ntp_time,
+                                sizeof(escaped_ntp_time)) != ESP_OK) {
+            err = ESP_FAIL;
             break;
         }
-        escaped_timestamp[output_length] = '\0';
 
-        char row[384];
+        char row[512];
         const int length = snprintf(row, sizeof(row),
-                                    "<tr><td>%s</td><td>%s</td></tr>",
-                                    escaped_timestamp, orientation_name(position));
+                                    "<tr><td>%s</td><td>%s</td><td>%s</td></tr>",
+                                    escaped_uptime, escaped_ntp_time,
+                                    orientation_name(position));
         if (length < 0 || (size_t)length >= sizeof(row)) {
             err = ESP_FAIL;
             break;

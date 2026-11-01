@@ -29,13 +29,36 @@ esp_err_t orientation_history_init(void)
         return ESP_FAIL;
     }
 
+    if (fseek(file, 0, SEEK_END) != 0) {
+        ESP_LOGE(TAG, "Failed to seek history file");
+        fclose(file);
+        return ESP_FAIL;
+    }
+    const long file_size = ftell(file);
+    if (file_size < 0) {
+        ESP_LOGE(TAG, "Failed to determine history file size");
+        fclose(file);
+        return ESP_FAIL;
+    }
+    if (file_size == 0 &&
+        fprintf(file, "Uptime,NTP time,Position\n") < 0) {
+        ESP_LOGE(TAG, "Failed to write history file header");
+        fclose(file);
+        return ESP_FAIL;
+    }
+
     rewind(file);
-    char line[96];
+    char line[128];
     while (fgets(line, sizeof(line), file) != NULL) {
-        char timestamp[64];
+        char uptime[32];
+        char ntp_time[32];
         int position;
-        if (sscanf(line, "%63[^,],%d", timestamp, &position) == 2 &&
+        if (sscanf(line, "%31[^,],%31[^,],%d", uptime, ntp_time, &position) == 3 &&
             position >= 0 && position <= 6) {
+            previous_position = (uint8_t)position;
+            has_previous_position = true;
+        } else if (sscanf(line, "%*[^,],%d", &position) == 1 &&
+                   position >= 0 && position <= 6) {
             previous_position = (uint8_t)position;
             has_previous_position = true;
         }
@@ -70,30 +93,32 @@ static esp_err_t orientation_history_record_internal(uint8_t position, bool forc
         return ESP_OK;
     }
 
-    char timestamp[64];
+    char uptime[32];
+    const uint64_t uptime_seconds = (uint64_t)(esp_timer_get_time() / 1000000);
+    const uint64_t hours = uptime_seconds / 3600;
+    const unsigned int minutes = (unsigned int)((uptime_seconds / 60) % 60);
+    const unsigned int seconds = (unsigned int)(uptime_seconds % 60);
+    const int uptime_length = snprintf(uptime, sizeof(uptime), "%llu:%02u:%02u",
+                                      (unsigned long long)hours, minutes, seconds);
+    if (uptime_length < 0 || (size_t)uptime_length >= sizeof(uptime)) {
+        ESP_LOGE(TAG, "Failed to format uptime");
+        xSemaphoreGive(history_mutex);
+        return ESP_FAIL;
+    }
+
+    char ntp_time[32];
     if (time_is_synchronized) {
         const time_t now = time(NULL);
         struct tm local_time;
         if (localtime_r(&now, &local_time) == NULL ||
-            strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S",
+            strftime(ntp_time, sizeof(ntp_time), "%Y-%m-%d %H:%M:%S",
                      &local_time) == 0) {
             ESP_LOGE(TAG, "Failed to format synchronized timestamp");
             xSemaphoreGive(history_mutex);
             return ESP_FAIL;
         }
     } else {
-        const uint64_t uptime_seconds = (uint64_t)(esp_timer_get_time() / 1000000);
-        const uint64_t hours = uptime_seconds / 3600;
-        const unsigned int minutes = (unsigned int)((uptime_seconds / 60) % 60);
-        const unsigned int seconds = (unsigned int)(uptime_seconds % 60);
-        const int length = snprintf(timestamp, sizeof(timestamp),
-                                    "uptime %llu:%02u:%02u",
-                                    (unsigned long long)hours, minutes, seconds);
-        if (length < 0 || (size_t)length >= sizeof(timestamp)) {
-            ESP_LOGE(TAG, "Failed to format uptime timestamp");
-            xSemaphoreGive(history_mutex);
-            return ESP_FAIL;
-        }
+        snprintf(ntp_time, sizeof(ntp_time), "undefined");
     }
 
     FILE *file = fopen(ORIENTATION_HISTORY_FILE, "a");
@@ -103,7 +128,7 @@ static esp_err_t orientation_history_record_internal(uint8_t position, bool forc
         return ESP_FAIL;
     }
 
-    const int written = fprintf(file, "%s,%u\n", timestamp, position);
+    const int written = fprintf(file, "%s,%s,%u\n", uptime, ntp_time, position);
     const bool write_failed = written < 0 || fflush(file) != 0;
     const bool close_failed = fclose(file) != 0;
     if (write_failed || close_failed) {
@@ -114,7 +139,8 @@ static esp_err_t orientation_history_record_internal(uint8_t position, bool forc
 
     previous_position = position;
     has_previous_position = true;
-    ESP_LOGI(TAG, "Recorded orientation %u at %s", position, timestamp);
+    ESP_LOGI(TAG, "Recorded orientation %u at uptime %s, NTP time %s",
+             position, uptime, ntp_time);
     xSemaphoreGive(history_mutex);
     return ESP_OK;
 }
