@@ -3,11 +3,24 @@ file upload: curl.exe --upload-file test.txt "http://192.168.43.72/files/test.tx
 Read: http://192.168.43.72/files/test.txt
 Read mit Curl: curl.exe "http://192.168.43.72/files/test.txt"
 
-## MPU6050 orientation sensor
+## Project features
 
-Connect the MPU6050 module to the ESP32 DevKit as follows:
+- Detects six cube positions using an MPU6500 and ESP32.
+- Shows live roll, pitch, yaw, and detected position on a Wi-Fi web dashboard.
+- Uses the WS2812 LEDs and dashboard colors to provide visual feedback.
+- Records position changes and displays orientation history with uptime and
+  network-synchronized timestamps.
+- Summarizes time spent in each position, including daily and all-time totals
+  and percentages.
+- Lists, reads, and uploads files through the web server.
+- Enters deep sleep after a long button press and wakes when the button is
+  pressed again.
 
-| MPU6050 | ESP32 DevKit |
+## MPU6500 orientation sensor
+
+Connect the MPU6500 module to the ESP32 DevKit as follows:
+
+| MPU6500 | ESP32 DevKit |
 | --- | --- |
 | VCC | 3.3 V |
 | GND | GND |
@@ -16,24 +29,27 @@ Connect the MPU6050 module to the ESP32 DevKit as follows:
 
 For the ESP32-C3 target, the driver uses GPIO 4 (SDA) and GPIO 5 (SCL).
 Use 3.3 V-compatible I2C pull-ups; many modules already include them. The
-driver checks both common I2C addresses (0x68 and 0x69) and accepts WHO_AM_I
-values 0x68 (MPU-6050) and 0x70 (MPU-6500).
+driver checks both common I2C addresses (0x68 and 0x69) and accepts
+WHO_AM_I values 0x68 (MPU-6050) and 0x70 (MPU-6500).
 
 `mpu6050_read_orientation()` returns roll, pitch, and yaw in degrees.
 Roll and pitch use accelerometer/gyroscope complementary filtering. Yaw is
 integrated from the gyroscope only, so it is relative and will drift over time
-because the MPU6050 has no magnetometer. When detected, the application outputs
+because the MPU6500 has no magnetometer. When detected, the application outputs
 all three angles to UART every 100 ms and serves them as JSON at `/orientation`.
 The home page displays the angles and refreshes them once per second. It also
 shows the detected cube position; the page background changes color for each
 of the six recognized positions and returns to a neutral color when the
 position is unknown or the sensor is unavailable.
 Each detected change in cube position is appended to
-`/littlefs/orientation_history.csv`, including transitions to an unclear
+`/littlefs/orientation_history.csv`, including transitions to an undefined
 orientation. The history table is displayed on the home page and can be
 refreshed with its button. The CSV and web table show time since startup and
 NTP-based local time in separate columns; the NTP time is `undefined` until
-synchronization.
+synchronization. The home page also summarizes the time and percentage spent
+in each of the six positions and in the undefined position, both today and
+across the recorded history. Each position has its own colored row, followed
+by a total-time row.
 
 ## Power button
 
@@ -44,7 +60,7 @@ enters deep sleep. The hold duration can be changed at build time by defining
 `SLEEP_BUTTON_HOLD_MS`. Pressing the same button wakes the device; it then
 boots normally.
 
-The UART log also records each MPU6050 I2C transaction: 7-bit device address,
+The UART log also records each MPU6500 I2C transaction: 7-bit device address,
 register/data bytes sent, received bytes, and the ESP-IDF result. Successful
 transaction results mean the driver observed ACKs; failures report the driver
 error (for example, a NACK or timeout). Because sensor samples are read every
