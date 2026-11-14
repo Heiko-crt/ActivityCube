@@ -13,8 +13,8 @@ Read mit Curl: curl.exe "http://192.168.43.72/files/test.txt"
 - Summarizes time spent in each position, including daily and all-time totals
   and percentages.
 - Lists, reads, and uploads files through the web server.
-- Enters deep sleep after a long button press and wakes when the button is
-  pressed again.
+- Enters deep sleep after a long button press and wakes from either the button
+  or MPU6500 wake-on-motion.
 
 ## MPU6500 orientation sensor
 
@@ -36,7 +36,7 @@ WHO_AM_I values 0x68 (MPU-6050) and 0x70 (MPU-6500).
 Roll and pitch use accelerometer/gyroscope complementary filtering. Yaw is
 integrated from the gyroscope only, so it is relative and will drift over time
 because the MPU6500 has no magnetometer. When detected, the application outputs
-all three angles to UART every 100 ms and serves them as JSON at `/orientation`.
+all three angles to UART once per second and serves them as JSON at `/orientation`.
 The home page displays the angles and refreshes them once per second. It also
 shows the detected cube position; the page background changes color for each
 of the six recognized positions and returns to a neutral color when the
@@ -57,8 +57,19 @@ Connect a normally open pushbutton between GPIO 33 and GND on the ESP32 DevKit.
 Holding it for 3 seconds sets the cube orientation to undefined and records
 that event, lights all WS2812 LEDs red for one second, turns them off, and
 enters deep sleep. The hold duration can be changed at build time by defining
-`SLEEP_BUTTON_HOLD_MS`. Pressing the same button wakes the device; it then
-boots normally.
+`SLEEP_BUTTON_HOLD_MS`.
+
+On a classic ESP32 (such as the ESP32 DevKit), connect the MPU6500 `INT` pin to
+GPIO 32, with a common ground and 3.3 V-compatible logic. During deep sleep the
+MPU6500 remains in low-power wake-on-motion mode; detected motion wakes the
+ESP32, which then boots normally. The wake-on-motion threshold is 80 mg and
+the accelerometer sampling rate is 20 Hz. Wake-on-motion requires an MPU6500;
+the MPU-6050 does not support this feature. The GPIO 32 wake connection is not
+available on the ESP32-C3 target.
+
+The firmware configures GPIO 33 for active-low button wake and GPIO 32 for the
+MPU6500's active-high, latched motion interrupt. Both wake sources should be
+tested with the actual board and sensor wiring.
 
 The UART log also records each MPU6500 I2C transaction: 7-bit device address,
 register/data bytes sent, received bytes, and the ESP-IDF result. Successful

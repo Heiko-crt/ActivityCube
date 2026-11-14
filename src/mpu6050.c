@@ -34,7 +34,6 @@
 #define MPU6500_REG_WOM_THR 0x1F
 #define MPU6500_REG_ACCEL_INTEL_CTRL 0x69
 #define MPU6500_WOM_THRESHOLD_80_MG 0x14
-#define MPU6500_WOM_THRESHOLD_200_MG 0x32
 #define MPU6500_WOM_INT_ENABLE 0x40
 #define MPU6500_ACCEL_INTEL_ENABLE_MODE 0xC0
 #define MPU6500_PWR_MGMT_1_CYCLE_TEMP_DIS 0x28
@@ -241,7 +240,7 @@ esp_err_t mpu6500_enter_wom_mode(void)
         err = write_register(MPU6050_REG_ACCEL_CONFIG, 0x00);
     }
     if (err == ESP_OK) {
-        err = write_register(MPU6500_REG_WOM_THR, MPU6500_WOM_THRESHOLD_200_MG);
+        err = write_register(MPU6500_REG_WOM_THR, MPU6500_WOM_THRESHOLD_80_MG);
     }
     if (err == ESP_OK) {
         err = write_register(MPU6500_REG_ACCEL_INTEL_CTRL,
