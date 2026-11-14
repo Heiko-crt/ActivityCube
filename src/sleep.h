@@ -7,6 +7,9 @@
 
 #define SLEEP_BUTTON_TASK_STACK_SIZE 8192
 #define SLEEP_BUTTON_PIN GPIO_NUM_33
+#if CONFIG_IDF_TARGET_ESP32
+#define MPU6500_WOM_PIN GPIO_NUM_32
+#endif
 
 void sleep_button_set_application_tasks(TaskHandle_t mpu6050_task,
                                         TaskHandle_t cube_task,

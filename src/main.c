@@ -3,8 +3,10 @@
 #include <string.h>
 #include "driver/uart.h"
 #include "driver/gpio.h"
+#include "driver/rtc_io.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_sleep.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -135,6 +137,21 @@ static void mpu6050_task(void *arg)
 
 void app_main(void)
 {
+#if CONFIG_IDF_TARGET_ESP32
+    const esp_sleep_wakeup_cause_t wakeup_cause = esp_sleep_get_wakeup_cause();
+    if (wakeup_cause == ESP_SLEEP_WAKEUP_EXT0) {
+        ESP_LOGI(TAG, "Woke from sleep button on GPIO%d", SLEEP_BUTTON_PIN);
+    } else if (wakeup_cause == ESP_SLEEP_WAKEUP_EXT1) {
+        ESP_LOGI(TAG, "Woke from MPU6500 motion interrupt on GPIO%d",
+                 MPU6500_WOM_PIN);
+    }
+    if (wakeup_cause == ESP_SLEEP_WAKEUP_EXT0 ||
+        wakeup_cause == ESP_SLEEP_WAKEUP_EXT1) {
+        ESP_ERROR_CHECK(rtc_gpio_deinit(SLEEP_BUTTON_PIN));
+        ESP_ERROR_CHECK(rtc_gpio_deinit(MPU6500_WOM_PIN));
+    }
+#endif
+
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());

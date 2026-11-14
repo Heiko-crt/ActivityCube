@@ -9,6 +9,7 @@
 #include "esp_sleep.h"
 #include "cube.h"
 #include "led.h"
+#include "mpu6050.h"
 #include "orientation_history.h"
 
 #ifndef SLEEP_BUTTON_HOLD_MS
@@ -95,11 +96,77 @@ static void enter_deep_sleep(void)
         return;
     }
 
-    ESP_ERROR_CHECK(rtc_gpio_init(SLEEP_BUTTON_PIN));
-    ESP_ERROR_CHECK(rtc_gpio_set_direction(SLEEP_BUTTON_PIN, RTC_GPIO_MODE_INPUT_ONLY));
-    ESP_ERROR_CHECK(rtc_gpio_pullup_en(SLEEP_BUTTON_PIN));
-    ESP_ERROR_CHECK(rtc_gpio_pulldown_dis(SLEEP_BUTTON_PIN));
-    ESP_ERROR_CHECK(esp_sleep_enable_ext0_wakeup(SLEEP_BUTTON_PIN, 0));
+#if CONFIG_IDF_TARGET_ESP32
+    err = rtc_gpio_init(MPU6500_WOM_PIN);
+    if (err == ESP_OK) {
+        err = rtc_gpio_set_direction(MPU6500_WOM_PIN, RTC_GPIO_MODE_INPUT_ONLY);
+    }
+    if (err == ESP_OK) {
+        err = rtc_gpio_pullup_dis(MPU6500_WOM_PIN);
+    }
+    if (err == ESP_OK) {
+        err = rtc_gpio_pulldown_en(MPU6500_WOM_PIN);
+    }
+    if (err == ESP_OK) {
+        err = esp_sleep_enable_ext1_wakeup(1ULL << MPU6500_WOM_PIN,
+                                           ESP_EXT1_WAKEUP_ANY_HIGH);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure MPU6500 wake pin: %s", esp_err_to_name(err));
+        rtc_gpio_deinit(MPU6500_WOM_PIN);
+        resume_application_tasks();
+        return;
+    }
+#else
+    ESP_LOGE(TAG, "MPU6500 wake-on-motion on GPIO32 requires the classic ESP32");
+    resume_application_tasks();
+    return;
+#endif
+
+    err = mpu6500_enter_wom_mode();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure MPU6500 wake-on-motion: %s",
+                 esp_err_to_name(err));
+        const esp_err_t recovery_err = mpu6050_init();
+        if (recovery_err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to restore motion sensor after wake-on-motion setup: %s",
+                     esp_err_to_name(recovery_err));
+        }
+#if CONFIG_IDF_TARGET_ESP32
+        rtc_gpio_deinit(MPU6500_WOM_PIN);
+#endif
+        resume_application_tasks();
+        return;
+    }
+
+    err = rtc_gpio_init(SLEEP_BUTTON_PIN);
+    if (err == ESP_OK) {
+        err = rtc_gpio_set_direction(SLEEP_BUTTON_PIN, RTC_GPIO_MODE_INPUT_ONLY);
+    }
+    if (err == ESP_OK) {
+        err = rtc_gpio_pullup_en(SLEEP_BUTTON_PIN);
+    }
+    if (err == ESP_OK) {
+        err = rtc_gpio_pulldown_dis(SLEEP_BUTTON_PIN);
+    }
+    if (err == ESP_OK) {
+        err = esp_sleep_enable_ext0_wakeup(SLEEP_BUTTON_PIN, 0);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure sleep-button wake pin: %s",
+                 esp_err_to_name(err));
+        const esp_err_t recovery_err = mpu6050_init();
+        if (recovery_err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to restore motion sensor after wake setup error: %s",
+                     esp_err_to_name(recovery_err));
+        }
+#if CONFIG_IDF_TARGET_ESP32
+        rtc_gpio_deinit(MPU6500_WOM_PIN);
+#endif
+        rtc_gpio_deinit(SLEEP_BUTTON_PIN);
+        resume_application_tasks();
+        return;
+    }
 
     ESP_LOGI(TAG, "Entering deep sleep; press the button to wake");
     esp_deep_sleep_start();

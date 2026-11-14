@@ -22,11 +22,24 @@
 #define MPU6500_WHO_AM_I_ID 0x70
 #define MPU6050_REG_WHO_AM_I 0x75
 #define MPU6050_REG_ACCEL_XOUT_H 0x3B
+#define MPU6050_REG_INT_ENABLE 0x38
+#define MPU6050_REG_INT_STATUS 0x3A
+#define MPU6050_REG_INT_PIN_CFG 0x37
 #define MPU6050_REG_PWR_MGMT_1 0x6B
+#define MPU6050_REG_PWR_MGMT_2 0x6C
 #define MPU6050_REG_SMPLRT_DIV 0x19
 #define MPU6050_REG_CONFIG 0x1A
 #define MPU6050_REG_GYRO_CONFIG 0x1B
 #define MPU6050_REG_ACCEL_CONFIG 0x1C
+#define MPU6500_REG_WOM_THR 0x1F
+#define MPU6500_REG_ACCEL_INTEL_CTRL 0x69
+#define MPU6500_WOM_THRESHOLD_80_MG 0x14
+#define MPU6500_WOM_THRESHOLD_200_MG 0x32
+#define MPU6500_WOM_INT_ENABLE 0x40
+#define MPU6500_ACCEL_INTEL_ENABLE_MODE 0xC0
+#define MPU6500_PWR_MGMT_1_CYCLE_TEMP_DIS 0x28
+#define MPU6500_PWR_MGMT_2_20_HZ_GYRO_STANDBY 0x87
+#define MPU6500_INT_PIN_CFG_LATCHED_ACTIVE_HIGH 0x20
 #define MPU6050_ACCEL_SCALE 16384.0f
 #define MPU6050_GYRO_SCALE 131.0f
 #define MPU6050_COMPLEMENTARY_ALPHA 0.98f
@@ -41,6 +54,7 @@
 
 static const char *TAG = "mpu6050";
 static uint8_t device_address;
+static uint8_t device_identity;
 static bool i2c_bus_initialized;
 static bool sensor_initialized;
 static bool orientation_initialized;
@@ -94,6 +108,18 @@ static esp_err_t read_registers(uint8_t reg, uint8_t *data, size_t length)
     return err;
 }
 
+static esp_err_t wake_sensor(void)
+{
+    const esp_err_t err = write_register(MPU6050_REG_PWR_MGMT_1, 0x00);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to wake motion sensor: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    ESP_LOGI(TAG, "Motion sensor awake");
+    return ESP_OK;
+}
+
 static int16_t read_signed_word(const uint8_t *data)
 {
     return (int16_t)(((uint16_t)data[0] << 8) | data[1]);
@@ -101,9 +127,7 @@ static int16_t read_signed_word(const uint8_t *data)
 
 esp_err_t mpu6050_init(void)
 {
-    if (sensor_initialized) {
-        return ESP_OK;
-    }
+    sensor_initialized = false;
 
     if (!i2c_bus_initialized) {
         ESP_LOGI(TAG, "I2C pins are: SDA=%d, SCL=%d", MPU6050_SDA_PIN, MPU6050_SCL_PIN);
@@ -138,6 +162,7 @@ esp_err_t mpu6050_init(void)
         if (err == ESP_OK) {
             if (identity == MPU6050_WHO_AM_I_ID || identity == MPU6500_WHO_AM_I_ID) {
                 found = true;
+                device_identity = identity;
                 ESP_LOGI(TAG, "Detected %s (WHO_AM_I=0x%02X)",
                          identity == MPU6500_WHO_AM_I_ID ? "MPU-6500" : "MPU-6050",
                          identity);
@@ -154,9 +179,23 @@ esp_err_t mpu6050_init(void)
         return ESP_ERR_NOT_FOUND;
     }
 
-    esp_err_t err = write_register(MPU6050_REG_PWR_MGMT_1, 0x00);
+    esp_err_t err = wake_sensor();
     if (err == ESP_OK) {
         vTaskDelay(pdMS_TO_TICKS(100));
+        err = write_register(MPU6050_REG_PWR_MGMT_2, 0x00);
+    }
+    if (err == ESP_OK && device_identity == MPU6500_WHO_AM_I_ID) {
+        uint8_t interrupt_status;
+        err = read_registers(MPU6050_REG_INT_STATUS, &interrupt_status,
+                             sizeof(interrupt_status));
+        if (err == ESP_OK) {
+            err = write_register(MPU6050_REG_INT_ENABLE, 0x00);
+        }
+        if (err == ESP_OK) {
+            err = write_register(MPU6500_REG_ACCEL_INTEL_CTRL, 0x00);
+        }
+    }
+    if (err == ESP_OK) {
         err = write_register(MPU6050_REG_SMPLRT_DIV, 0x07);
     }
     if (err == ESP_OK) {
@@ -176,6 +215,56 @@ esp_err_t mpu6050_init(void)
     sensor_initialized = true;
     ESP_LOGI(TAG, "Motion sensor ready at I2C address 0x%02x (SDA GPIO%d, SCL GPIO%d)",
              device_address, MPU6050_SDA_PIN, MPU6050_SCL_PIN);
+    return ESP_OK;
+}
+
+esp_err_t mpu6500_enter_wom_mode(void)
+{
+    if (!sensor_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (device_identity != MPU6500_WHO_AM_I_ID) {
+        ESP_LOGE(TAG, "Wake-on-motion is only supported by the MPU6500");
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    esp_err_t err = write_register(MPU6050_REG_PWR_MGMT_1, 0x00);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to wake MPU6500 before configuring wake-on-motion: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
+    err = write_register(MPU6050_REG_PWR_MGMT_2,
+                         MPU6500_PWR_MGMT_2_20_HZ_GYRO_STANDBY);
+    if (err == ESP_OK) {
+        err = write_register(MPU6050_REG_ACCEL_CONFIG, 0x00);
+    }
+    if (err == ESP_OK) {
+        err = write_register(MPU6500_REG_WOM_THR, MPU6500_WOM_THRESHOLD_200_MG);
+    }
+    if (err == ESP_OK) {
+        err = write_register(MPU6500_REG_ACCEL_INTEL_CTRL,
+                             MPU6500_ACCEL_INTEL_ENABLE_MODE);
+    }
+    if (err == ESP_OK) {
+        err = write_register(MPU6050_REG_INT_PIN_CFG,
+                             MPU6500_INT_PIN_CFG_LATCHED_ACTIVE_HIGH);
+    }
+    if (err == ESP_OK) {
+        err = write_register(MPU6050_REG_INT_ENABLE, MPU6500_WOM_INT_ENABLE);
+    }
+    if (err == ESP_OK) {
+        err = write_register(MPU6050_REG_PWR_MGMT_1,
+                             MPU6500_PWR_MGMT_1_CYCLE_TEMP_DIS);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure MPU6500 wake-on-motion: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
+    ESP_LOGI(TAG, "MPU6500 wake-on-motion enabled at 80 mg and 20 Hz");
     return ESP_OK;
 }
 
