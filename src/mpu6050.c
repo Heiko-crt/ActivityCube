@@ -35,7 +35,7 @@
 #define MPU6500_REG_LP_ACCEL_ODR 0x1E
 #define MPU6500_REG_WOM_THR 0x1F
 #define MPU6500_REG_ACCEL_INTEL_CTRL 0x69
-#define MPU6500_WOM_THRESHOLD_500_MG 0x7D
+#define MPU6500_WOM_THRESHOLD_600_MG 0x96
 #define MPU6500_WOM_INT_ENABLE 0x40
 #define MPU6500_ACCEL_INTEL_ENABLE_INITIAL_SAMPLE 0x80
 #define MPU6500_PWR_MGMT_1_CYCLE_TEMP_DIS 0x28
@@ -273,7 +273,7 @@ esp_err_t mpu6500_enter_wom_mode(void)
                              MPU6500_LP_ACCEL_ODR_15_63_HZ);
     }
     if (err == ESP_OK) {
-        err = write_register(MPU6500_REG_WOM_THR, MPU6500_WOM_THRESHOLD_500_MG);
+        err = write_register(MPU6500_REG_WOM_THR, MPU6500_WOM_THRESHOLD_600_MG);
     }
     if (err == ESP_OK) {
         err = write_register(MPU6500_REG_ACCEL_INTEL_CTRL,
@@ -310,7 +310,7 @@ esp_err_t mpu6500_enter_wom_mode(void)
         return err;
     }
 
-    ESP_LOGI(TAG, "MPU6500 wake-on-motion enabled at 500 mg and 15.63 Hz");
+    ESP_LOGI(TAG, "MPU6500 wake-on-motion enabled at 600 mg and 15.63 Hz");
     return ESP_OK;
 }
 

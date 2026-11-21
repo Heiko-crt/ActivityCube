@@ -64,7 +64,7 @@ without a detected cube-orientation change.
 On a classic ESP32 (such as the ESP32 DevKit), connect the MPU6500 `INT` pin to
 GPIO 32, with a common ground and 3.3 V-compatible logic. During deep sleep the
 MPU6500 remains in low-power wake-on-motion mode; detected motion wakes the
-ESP32, which then boots normally. The wake-on-motion threshold is 500 mg and
+ESP32, which then boots normally. The wake-on-motion threshold is 600 mg and
 the accelerometer sampling rate is 15.63 Hz. Wake-on-motion requires an MPU6500;
 the MPU-6050 does not support this feature. The GPIO 32 wake connection is not
 available on the ESP32-C3 target.
