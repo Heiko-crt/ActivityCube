@@ -148,6 +148,8 @@ void app_main(void)
     if (wakeup_cause == ESP_SLEEP_WAKEUP_EXT0 ||
         wakeup_cause == ESP_SLEEP_WAKEUP_EXT1) {
         ESP_ERROR_CHECK(rtc_gpio_deinit(SLEEP_BUTTON_PIN));
+    }
+    if (wakeup_cause == ESP_SLEEP_WAKEUP_EXT1) {
         ESP_ERROR_CHECK(rtc_gpio_deinit(MPU6500_WOM_PIN));
     }
 #endif

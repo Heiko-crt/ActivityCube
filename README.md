@@ -13,8 +13,9 @@ Read mit Curl: curl.exe "http://192.168.43.72/files/test.txt"
 - Summarizes time spent in each position, including daily and all-time totals
   and percentages.
 - Lists, reads, and uploads files through the web server.
-- Enters deep sleep after a long button press and wakes from either the button
-  or MPU6500 wake-on-motion.
+- Enters deep sleep after a 3-second button hold or 30 seconds without a
+  detected orientation change, and wakes from either the button or MPU6500
+  wake-on-motion.
 
 ## MPU6500 orientation sensor
 
@@ -57,19 +58,22 @@ Connect a normally open pushbutton between GPIO 33 and GND on the ESP32 DevKit.
 Holding it for 3 seconds sets the cube orientation to undefined and records
 that event, lights all WS2812 LEDs red for one second, turns them off, and
 enters deep sleep. The hold duration can be changed at build time by defining
-`SLEEP_BUTTON_HOLD_MS`.
+`SLEEP_BUTTON_HOLD_MS`. The device also enters deep sleep after 30 seconds
+without a detected cube-orientation change.
 
 On a classic ESP32 (such as the ESP32 DevKit), connect the MPU6500 `INT` pin to
 GPIO 32, with a common ground and 3.3 V-compatible logic. During deep sleep the
 MPU6500 remains in low-power wake-on-motion mode; detected motion wakes the
-ESP32, which then boots normally. The wake-on-motion threshold is 80 mg and
-the accelerometer sampling rate is 20 Hz. Wake-on-motion requires an MPU6500;
+ESP32, which then boots normally. The wake-on-motion threshold is 500 mg and
+the accelerometer sampling rate is 15.63 Hz. Wake-on-motion requires an MPU6500;
 the MPU-6050 does not support this feature. The GPIO 32 wake connection is not
 available on the ESP32-C3 target.
 
 The firmware configures GPIO 33 for active-low button wake and GPIO 32 for the
 MPU6500's active-high, latched motion interrupt. Both wake sources should be
-tested with the actual board and sensor wiring.
+tested with the actual board and sensor wiring. A button-initiated sleep only
+wakes from the button; the MPU6500 is put into sleep mode. An inactivity-
+initiated sleep also enables MPU6500 wake-on-motion.
 
 The UART log also records each MPU6500 I2C transaction: 7-bit device address,
 register/data bytes sent, received bytes, and the ESP-IDF result. Successful

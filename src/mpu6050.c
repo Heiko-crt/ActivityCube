@@ -27,17 +27,20 @@
 #define MPU6050_REG_INT_PIN_CFG 0x37
 #define MPU6050_REG_PWR_MGMT_1 0x6B
 #define MPU6050_REG_PWR_MGMT_2 0x6C
+#define MPU6050_PWR_MGMT_1_SLEEP 0x40
 #define MPU6050_REG_SMPLRT_DIV 0x19
 #define MPU6050_REG_CONFIG 0x1A
 #define MPU6050_REG_GYRO_CONFIG 0x1B
 #define MPU6050_REG_ACCEL_CONFIG 0x1C
+#define MPU6500_REG_LP_ACCEL_ODR 0x1E
 #define MPU6500_REG_WOM_THR 0x1F
 #define MPU6500_REG_ACCEL_INTEL_CTRL 0x69
-#define MPU6500_WOM_THRESHOLD_80_MG 0x14
+#define MPU6500_WOM_THRESHOLD_500_MG 0x7D
 #define MPU6500_WOM_INT_ENABLE 0x40
-#define MPU6500_ACCEL_INTEL_ENABLE_MODE 0xC0
+#define MPU6500_ACCEL_INTEL_ENABLE_INITIAL_SAMPLE 0x80
 #define MPU6500_PWR_MGMT_1_CYCLE_TEMP_DIS 0x28
-#define MPU6500_PWR_MGMT_2_20_HZ_GYRO_STANDBY 0x87
+#define MPU6500_LP_ACCEL_ODR_15_63_HZ 0x06
+#define MPU6500_PWR_MGMT_2_GYRO_STANDBY 0x07
 #define MPU6500_INT_PIN_CFG_LATCHED_ACTIVE_HIGH 0x20
 #define MPU6050_ACCEL_SCALE 16384.0f
 #define MPU6050_GYRO_SCALE 131.0f
@@ -217,6 +220,24 @@ esp_err_t mpu6050_init(void)
     return ESP_OK;
 }
 
+esp_err_t mpu6050_enter_sleep_mode(void)
+{
+    if (!sensor_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    const esp_err_t err = write_register(MPU6050_REG_PWR_MGMT_1,
+                                         MPU6050_PWR_MGMT_1_SLEEP);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to put motion sensor into sleep mode: %s",
+                 esp_err_to_name(err));
+        return err;
+    }
+
+    ESP_LOGI(TAG, "Motion sensor sleep mode enabled");
+    return ESP_OK;
+}
+
 esp_err_t mpu6500_enter_wom_mode(void)
 {
     if (!sensor_initialized) {
@@ -227,7 +248,15 @@ esp_err_t mpu6500_enter_wom_mode(void)
         return ESP_ERR_NOT_SUPPORTED;
     }
 
-    esp_err_t err = write_register(MPU6050_REG_PWR_MGMT_1, 0x00);
+    esp_err_t err = write_register(MPU6050_REG_INT_ENABLE, 0x00);
+    uint8_t interrupt_status;
+    if (err == ESP_OK) {
+        err = read_registers(MPU6050_REG_INT_STATUS, &interrupt_status,
+                             sizeof(interrupt_status));
+    }
+    if (err == ESP_OK) {
+        err = write_register(MPU6050_REG_PWR_MGMT_1, 0x00);
+    }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to wake MPU6500 before configuring wake-on-motion: %s",
                  esp_err_to_name(err));
@@ -235,27 +264,45 @@ esp_err_t mpu6500_enter_wom_mode(void)
     }
 
     err = write_register(MPU6050_REG_PWR_MGMT_2,
-                         MPU6500_PWR_MGMT_2_20_HZ_GYRO_STANDBY);
+                         MPU6500_PWR_MGMT_2_GYRO_STANDBY);
     if (err == ESP_OK) {
         err = write_register(MPU6050_REG_ACCEL_CONFIG, 0x00);
     }
     if (err == ESP_OK) {
-        err = write_register(MPU6500_REG_WOM_THR, MPU6500_WOM_THRESHOLD_80_MG);
+        err = write_register(MPU6500_REG_LP_ACCEL_ODR,
+                             MPU6500_LP_ACCEL_ODR_15_63_HZ);
+    }
+    if (err == ESP_OK) {
+        err = write_register(MPU6500_REG_WOM_THR, MPU6500_WOM_THRESHOLD_500_MG);
     }
     if (err == ESP_OK) {
         err = write_register(MPU6500_REG_ACCEL_INTEL_CTRL,
-                             MPU6500_ACCEL_INTEL_ENABLE_MODE);
+                             MPU6500_ACCEL_INTEL_ENABLE_INITIAL_SAMPLE);
     }
     if (err == ESP_OK) {
         err = write_register(MPU6050_REG_INT_PIN_CFG,
                              MPU6500_INT_PIN_CFG_LATCHED_ACTIVE_HIGH);
     }
     if (err == ESP_OK) {
+        err = write_register(MPU6050_REG_PWR_MGMT_1,
+                             MPU6500_PWR_MGMT_1_CYCLE_TEMP_DIS);
+    }
+    if (err == ESP_OK) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        err = read_registers(MPU6050_REG_INT_STATUS, &interrupt_status,
+                             sizeof(interrupt_status));
+    }
+    if (err == ESP_OK) {
         err = write_register(MPU6050_REG_INT_ENABLE, MPU6500_WOM_INT_ENABLE);
     }
     if (err == ESP_OK) {
-        err = write_register(MPU6050_REG_PWR_MGMT_1,
-                             MPU6500_PWR_MGMT_1_CYCLE_TEMP_DIS);
+        vTaskDelay(pdMS_TO_TICKS(50));
+        err = read_registers(MPU6050_REG_INT_STATUS, &interrupt_status,
+                             sizeof(interrupt_status));
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "MPU6500 interrupt status after WOM setup: 0x%02X",
+                     interrupt_status);
+        }
     }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to configure MPU6500 wake-on-motion: %s",
@@ -263,7 +310,7 @@ esp_err_t mpu6500_enter_wom_mode(void)
         return err;
     }
 
-    ESP_LOGI(TAG, "MPU6500 wake-on-motion enabled at 80 mg and 20 Hz");
+    ESP_LOGI(TAG, "MPU6500 wake-on-motion enabled at 500 mg and 15.63 Hz");
     return ESP_OK;
 }
 
