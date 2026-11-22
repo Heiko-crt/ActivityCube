@@ -14,6 +14,11 @@
   detected orientation change, and wakes from either the button or MPU6500
   wake-on-motion.
 
+## Contact and contributions
+
+This is a personal project, currently developed without external contributions.
+If you have questions, feel free to [start a discussion on GitHub](https://github.com/Heiko-crt/ActivityCube/discussions) — I welcome the conversation.
+
 ## MPU6500 orientation sensor
 
 Connect the MPU6500 module to the ESP32 DevKit as follows:
