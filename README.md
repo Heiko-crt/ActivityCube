@@ -1,4 +1,5 @@
 # Activity Cube
+<img src="447777742.png" alt="ActivityCube" width="300">
 
 ## Project features
 
