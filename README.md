@@ -95,6 +95,22 @@ tested with the actual board and sensor wiring. A button-initiated sleep only
 wakes from the button; the MPU6500 is put into sleep mode. An inactivity-
 initiated sleep also enables MPU6500 wake-on-motion.
 
+## Specific hardware details
+
+An HT7333 linear voltage regulator is used for battery supply instead of the
+ESP32 board's onboard AMS1117. The HT7333 has a much lower quiescent current,
+which is important for battery operation and deep-sleep runtime.
+
+When battery and USB power are connected in parallel, a Schottky diode should
+be added to prevent backward current. Suitable Schottky diodes tested for this
+setup caused too much voltage drop, so the ESP32 did not power up reliably.
+The diode has therefore been left out, but this remains a hardware risk that
+should be addressed when the power supply is revised.
+
+An additional 100 nF capacitor is connected to the ESP32 `EN` pin. It lengthens
+the reset pulse triggered by the CP2102 during flash initialization, helping
+ensure that the device remains in bootloader mode until flashing is complete.
+
 ## Wi-Fi credentials
 
 Copy `src/wifi_credentials.h.example` to `src/wifi_credentials.h` and set your
