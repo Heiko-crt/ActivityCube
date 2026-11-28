@@ -15,8 +15,13 @@
 #ifndef SLEEP_BUTTON_HOLD_MS
 #define SLEEP_BUTTON_HOLD_MS 3000
 #endif
+#ifndef INACTIVITY_SLEEP_ENABLED
+#define INACTIVITY_SLEEP_ENABLED 0
+#endif
 #define SLEEP_BUTTON_POLL_MS 50
+#if INACTIVITY_SLEEP_ENABLED
 #define INACTIVITY_SLEEP_MS 30000
+#endif
 
 static const char *TAG = "sleep";
 static TaskHandle_t mpu6050_task_handle;
@@ -218,19 +223,25 @@ void sleep_button_task(void *arg)
     (void)arg;
     const TickType_t hold_time = pdMS_TO_TICKS(SLEEP_BUTTON_HOLD_MS);
     const TickType_t poll_interval = pdMS_TO_TICKS(SLEEP_BUTTON_POLL_MS);
+#if INACTIVITY_SLEEP_ENABLED
     const TickType_t inactivity_timeout = pdMS_TO_TICKS(INACTIVITY_SLEEP_MS);
+#endif
     bool pressed = false;
     TickType_t pressed_since = 0;
+#if INACTIVITY_SLEEP_ENABLED
     TickType_t last_orientation_change = xTaskGetTickCount();
     uint8_t last_position = cube_get_position();
+#endif
 
     while (1) {
         const TickType_t now = xTaskGetTickCount();
+#if INACTIVITY_SLEEP_ENABLED
         const uint8_t position = cube_get_position();
         if (position != last_position) {
             last_position = position;
             last_orientation_change = now;
         }
+#endif
 
         if (gpio_get_level(SLEEP_BUTTON_PIN) == 0) {
             if (!pressed) {
@@ -263,18 +274,22 @@ void sleep_button_task(void *arg)
                     continue;
                 }
 
+#if INACTIVITY_SLEEP_ENABLED
                 last_orientation_change = xTaskGetTickCount();
+#endif
                 enter_deep_sleep(false);
                 pressed = false;
             }
         } else {
             pressed = false;
+#if INACTIVITY_SLEEP_ENABLED
             if (now - last_orientation_change >= inactivity_timeout) {
                 ESP_LOGI(TAG, "No orientation change for %u ms; entering deep sleep",
                          (unsigned)INACTIVITY_SLEEP_MS);
                 last_orientation_change = now;
                 enter_deep_sleep(true);
             }
+#endif
         }
         vTaskDelay(poll_interval);
     }

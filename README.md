@@ -84,8 +84,11 @@ Connect a normally open pushbutton between GPIO 33 and GND on the ESP32 DevKit.
 Holding it for 3 seconds sets the cube orientation to undefined and records
 that event, lights all WS2812 LEDs red for one second, turns them off, and
 enters deep sleep. The hold duration can be changed at build time by defining
-`SLEEP_BUTTON_HOLD_MS`. The device also enters deep sleep after 30 seconds
-without a detected cube-orientation change.
+`SLEEP_BUTTON_HOLD_MS`. Automatic deep sleep after 30 seconds without a
+detected cube-orientation change is disabled by default for demonstrations.
+To enable it, define `INACTIVITY_SLEEP_ENABLED=1` at build time (for example,
+add `-DINACTIVITY_SLEEP_ENABLED=1` to the PlatformIO environment's `build_flags`).
+The long-press sleep button remains active either way.
 
 On a classic ESP32 (such as the ESP32 DevKit), connect the MPU6500 `INT` pin to
 GPIO 32, with a common ground and 3.3 V-compatible logic. During deep sleep the

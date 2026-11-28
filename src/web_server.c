@@ -71,6 +71,16 @@ static esp_err_t index_handler(httpd_req_t *request)
         ".status{display:inline-block;padding:.35rem .7rem;border-radius:999px;"
         "background:#e2e8f0;font-weight:600}"
         "iframe{width:100%;height:24rem;border:1px solid #cbd5e1;background:white}"
+        "table{border-collapse:collapse;background:white}th,td{text-align:left;"
+        "padding:.5rem;border:1px solid #cbd5e1}"
+        "#statistics .position-0{background:#e2e8f0}"
+        "#statistics .position-1{background:#ffe4e6}"
+        "#statistics .position-2{background:#dcfce7}"
+        "#statistics .position-3{background:#fef9c3}"
+        "#statistics .position-4{background:#f3e8ff}"
+        "#statistics .position-5{background:#dbeafe}"
+        "#statistics .position-6{background:#f8fafc}"
+        "#statistics .total{font-weight:700;background:#cbd5e1}"
         "</style></head><body data-position='unknown'>"
         "<h1>Activity Cube</h1><p style='display:flex;gap:1.5em'>"
         "<span>UART counter: <strong id='count'>...</strong></span>"
@@ -80,8 +90,13 @@ static esp_err_t index_handler(httpd_req_t *request)
         "<p>Roll: <strong id='roll'>...</strong> degrees</p>"
         "<p>Pitch: <strong id='pitch'>...</strong> degrees</p>"
         "<p>Yaw: <strong id='yaw'>...</strong> degrees</p>"
+        "<h2>Time in each position</h2>"
+        "<p>Time and share of recorded time for today and overall.</p>"
+        "<table><thead><tr><th>Position</th><th>Today</th><th>Total</th></tr></thead>"
+        "<tbody id='statistics'><tr><td colspan='3'>Loading...</td></tr></tbody></table>"
+        "<p id='statistics-status' role='status' aria-live='polite'></p>"
         "<h2>Orientation history</h2>"
-        "<p>Position changes are recorded; unclear orientation is shown as such. "
+        "<p>Position changes are recorded; undefined orientation is shown as such. "
         "Time since startup and NTP-based time are shown separately; NTP time is "
         "undefined until synchronization.</p>"
         "<button type='button' onclick=\"document.getElementById('history').src="
@@ -95,8 +110,29 @@ static esp_err_t index_handler(httpd_req_t *request)
         "try{const response=await fetch('/history',{method:'DELETE'});"
         "if(!response.ok)throw Error(await response.text());"
         "document.getElementById('history').src='/history?refresh='+Date.now();"
-        "status.textContent='History cleared.';}"
+        "status.textContent='History cleared.';updateStatistics();}"
         "catch(e){status.textContent='Could not clear history: '+e.message;}}"
+        "const positionNames=['Undefined','Position 1','Position 2','Position 3',"
+        "'Position 4','Position 5','Position 6'];"
+        "function formatDuration(value){const seconds=Math.floor(value);"
+        "const days=Math.floor(seconds/86400),hours=Math.floor(seconds%86400/3600),"
+        "minutes=Math.floor(seconds%3600/60),remainder=seconds%60;"
+        "const clock=[hours,minutes,remainder].map(n=>String(n).padStart(2,'0')).join(':');"
+        "return days?days+'d '+clock:clock;}"
+        "async function updateStatistics(){const status=document.getElementById('statistics-status');"
+        "try{const response=await fetch('/statistics');if(!response.ok)throw Error('Request failed');"
+        "const data=await response.json();const todayTotal=data.today.reduce((a,b)=>a+b,0);"
+        "const total=data.total.reduce((a,b)=>a+b,0);"
+        "document.getElementById('statistics').innerHTML=positionNames.map((name,i)=>"
+        "'<tr class=\"position-'+i+'\"><td>'+name+'</td><td>'+(data.todayAvailable?formatDuration(data.today[i])+"
+        "' ('+(todayTotal?data.today[i]*100/todayTotal:0).toFixed(1)+'%)':'Waiting for NTP')"
+        "+'</td><td>'+formatDuration(data.total[i])+' ('+"
+        "(total?data.total[i]*100/total:0).toFixed(1)+'%)</td></tr>').join('')+"
+        "'<tr class=\"total\"><td>Total time</td><td>'+(data.todayAvailable?"
+        "formatDuration(todayTotal)+' ('+(todayTotal?100:0).toFixed(1)+'%)':'Waiting for NTP')"
+        "+'</td><td>'+formatDuration(total)+' ('+(total?100:0).toFixed(1)+'%)</td></tr>'; "
+        "status.textContent='';}"
+        "catch(e){status.textContent='Could not load statistics: '+e.message;}}"
         "function getPosition(a){const r=a.roll,p=a.pitch;"
         "if(p>=-15&&p<=15&&r>=75&&r<=105)return 1;"
         "if(p>=-105&&p<=-75)return 2;"
@@ -127,7 +163,8 @@ static esp_err_t index_handler(httpd_req_t *request)
         "document.getElementById('yaw').textContent='Offline';"
         "document.getElementById('position').textContent='Offline';"
         "document.body.dataset.position='unknown';}}"
-        "update();setInterval(update,1000);</script></body></html>";
+        "update();updateStatistics();setInterval(update,1000);"
+        "setInterval(updateStatistics,10000);</script></body></html>";
 
     httpd_resp_set_type(request, "text/html; charset=utf-8");
     return httpd_resp_send(request, page, HTTPD_RESP_USE_STRLEN);
@@ -164,6 +201,71 @@ static esp_err_t time_handler(httpd_req_t *request)
     return httpd_resp_send(request, response, HTTPD_RESP_USE_STRLEN);
 }
 
+static esp_err_t statistics_handler(httpd_req_t *request)
+{
+    orientation_history_statistics_t statistics;
+    const esp_err_t err = orientation_history_get_statistics(&statistics);
+    if (err != ESP_OK) {
+        ESP_LOGE("web_server", "Failed to get orientation statistics: %s",
+                 esp_err_to_name(err));
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Failed to get orientation statistics");
+    }
+
+    char response[384];
+    int length = snprintf(response, sizeof(response),
+                          "{\"todayAvailable\":%s,\"today\":[",
+                          time_is_synchronized ? "true" : "false");
+    if (length < 0 || (size_t)length >= sizeof(response)) {
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Failed to format orientation statistics");
+    }
+    size_t offset = (size_t)length;
+    for (size_t i = 0; i < 7; ++i) {
+        length = snprintf(response + offset, sizeof(response) - offset,
+                          "%s%llu", i == 0 ? "" : ",",
+                          (unsigned long long)statistics.today_seconds[i]);
+        if (length < 0 || (size_t)length >= sizeof(response) - offset) {
+            return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                       "Failed to format orientation statistics");
+        }
+        offset += (size_t)length;
+    }
+    length = snprintf(response + offset, sizeof(response) - offset,
+                      "],\"total\":[");
+    if (length < 0 || (size_t)length >= sizeof(response) - offset) {
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Failed to format orientation statistics");
+    }
+    offset += (size_t)length;
+    for (size_t i = 0; i < 7; ++i) {
+        length = snprintf(response + offset, sizeof(response) - offset,
+                          "%s%llu", i == 0 ? "" : ",",
+                          (unsigned long long)statistics.total_seconds[i]);
+        if (length < 0 || (size_t)length >= sizeof(response) - offset) {
+            return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                       "Failed to format orientation statistics");
+        }
+        offset += (size_t)length;
+    }
+    length = snprintf(response + offset, sizeof(response) - offset, "]}");
+    if (length < 0 || (size_t)length >= sizeof(response) - offset) {
+        return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "Failed to format orientation statistics");
+    }
+
+    esp_err_t response_err =
+        httpd_resp_set_type(request, "application/json; charset=utf-8");
+    if (response_err != ESP_OK) {
+        return response_err;
+    }
+    response_err = httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    if (response_err != ESP_OK) {
+        return response_err;
+    }
+    return httpd_resp_send(request, response, HTTPD_RESP_USE_STRLEN);
+}
+
 static esp_err_t orientation_handler(httpd_req_t *request)
 {
     mpu6050_orientation_t orientation;
@@ -193,7 +295,7 @@ static esp_err_t orientation_handler(httpd_req_t *request)
 static const char *orientation_name(int position)
 {
     static const char *const names[] = {
-        "Unclear", "Position 1", "Position 2", "Position 3",
+        "Undefined", "Position 1", "Position 2", "Position 3",
         "Position 4", "Position 5", "Position 6",
     };
     return position >= 0 && position <= 6 ? names[position] : NULL;
@@ -550,6 +652,18 @@ esp_err_t web_server_start(void)
         .handler = time_handler,
     };
     err = httpd_register_uri_handler(server, &time_uri);
+    if (err != ESP_OK) {
+        httpd_stop(server);
+        server = NULL;
+        return err;
+    }
+
+    const httpd_uri_t statistics_uri = {
+        .uri = "/statistics",
+        .method = HTTP_GET,
+        .handler = statistics_handler,
+    };
+    err = httpd_register_uri_handler(server, &statistics_uri);
     if (err != ESP_OK) {
         httpd_stop(server);
         server = NULL;

@@ -7,9 +7,16 @@
 
 #define ORIENTATION_HISTORY_FILE "/littlefs/orientation_history.csv"
 
+typedef struct {
+    uint64_t today_seconds[7];
+    uint64_t total_seconds[7];
+} orientation_history_statistics_t;
+
 esp_err_t orientation_history_init(void);
 esp_err_t orientation_history_record(uint8_t position);
 esp_err_t orientation_history_record_event(uint8_t position);
+esp_err_t orientation_history_get_statistics(
+    orientation_history_statistics_t *statistics);
 esp_err_t orientation_history_clear(void);
 
 #endif
